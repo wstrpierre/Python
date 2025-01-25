@@ -2,50 +2,82 @@ import numpy as np
 from scipy.ndimage import convolve
 from scipy.sparse.csgraph import dijkstra
 from scipy.sparse import coo_matrix
-from heapq import heappop, heappush
+
+
+def get_net(raw):
+    id_map, grid = 56 + np.arange(raw.size).reshape(raw.shape), raw != '#'
+    neighbors = convolve(raw != '#', [[0, 1, 0], [2, 0, 8], [0, 4, 0]], int)[raw != '#']
+    ids, width, keys, m = id_map[grid], grid.shape[1], ''.join(sorted(raw[raw >= 'a'])), id_map.max()
+    gen_edges = ((s, ids[neighbors & 2 ** k > 0]) for k, s in enumerate([width, 1, -width, -1]))
+    edges = np.concatenate([np.stack((nb_ids, nb_ids + s)).T for s, nb_ids in gen_edges])
+    nodes, node_ids = raw[raw > '.'], id_map[raw > '.']
+    edge_mask, n = tuple(np.where(np.isin(edges[:, 1], node_ids))[0]), len(nodes)
+    edges[edge_mask, 1] = [*map(dict(zip(node_ids, range(n))).get, edges[edge_mask, 1])]
+    dists = dijkstra(coo_matrix((np.ones(len(edges)), edges.T), (m, m)), True, node_ids)[:, range(n)]
+    return {i: {j: int(x) for j, x in zip(nodes, d) if i != j and x < 1e9} for i, d in zip(nodes, dists)}, keys
+
+
+def solve_1(data):
+    queues, seen, (net, tgt) = [[('@', '')]], set(), get_net(np.array([*map(list, data.split())]))
+    for t, queue in enumerate(queues):
+        for head, keys in queue:
+            keys = ''.join(sorted(keys + head)) if head.islower() and head not in keys else keys
+            if keys == tgt:
+                return t
+            if (head, keys) not in seen:
+                seen.add((head, keys))
+                for h, dt in net[head].items():
+                    if not h.isupper() or h.lower() in keys:
+                        while len(queues) <= t + dt:
+                            queues.append([])
+                        queues[t + dt].append((h, keys))
+
+
+def solve_2(data):
+    raw = np.array([[*row] for row in data.split()])
+
+    starts = np.argwhere(raw == '@')
+    if len(starts) > 1:
+        raw[tuple(starts.T)] = range(len(starts))
+    else:
+        i, j = starts[0]
+        raw[i - 1:i + 2, j - 1:j + 2] = ('0', '#', '1'), ('#', '#', '#'), ('2', '#', '3')
+
+    queues, seen, (net, tgt) = [[('0123', '')]], set(), get_net(raw)
+    for t, queue in enumerate(queues):
+        for heads, keys in queue:
+            for head in heads:
+                if keys == tgt:
+                    return t
+                if (head, keys) not in seen:
+                    seen.add((head, keys))
+                    for h, dt in net[head].items():
+                        keys1 = ''.join(sorted(keys + h)) if h.islower() and h not in keys else keys
+                        if not h.isupper() or h.lower() in keys1:
+                            while len(queues) <= t + dt:
+                                queues.append([])
+                            queues[t + dt].append((heads.replace(head, h), keys1))
 
 
 def solve(data):
-    raw = np.array([[*row] for row in data.split()], 'U1')
-
-    grid, id_map, w = raw != '#', np.arange(raw.size).reshape(raw.shape), raw.shape[1]
-    nbs, ids, msk = convolve(grid, [[0, 1, 0], [2, 0, 8], [0, 4, 0]], int)[grid], id_map[grid], raw >= '@'
-    gen, nodes = ((s, ids[nbs & 2 ** k > 0]) for k, s in enumerate([w, 1, -w, -1])), dict(zip(raw[msk], id_map[msk]))
-    edges, nodes = np.concatenate([np.stack((nb_ids, nb_ids + s)).T for s, nb_ids in gen]), dict(sorted(nodes.items()))
-    m, nids = tuple(np.where(np.isin(edges[:, 1], [*nodes.values()]))[0]), {k: i for i, k in enumerate(nodes.values())}
-    edges[m, 1], nmap, n = [*map(nids.get, edges[m, 1])], [*nodes], sum(map(str.islower, nodes))
-    dists = dijkstra(coo_matrix((np.ones(len(edges)), edges.T)), True, [*nids])[:, [*nids.values()]]
-    net = {nmap[i]: {nmap[j]: d for j, d in enumerate(r) if i != j and 0 < d < 1e4} for i, r in enumerate(dists)}
-    pending, visited, res, tgt = [(0, '@', 0)], {}, 1e6, 2 ** n - 1
-
-    while pending:
-        d0, head, seq = heappop(pending)
-        if d0 < visited.get((head, seq), res):
-            visited[head, seq] = d0
-            if seq == tgt:
-                res = d0
-            else:
-                for k, d1 in net[head].items():
-                    if k.isupper():
-                        if (seq >> (ord(k) - 65)) & 1 and d0 + d1 < visited.get((k, seq), 1e6):
-                            heappush(pending, (d0 + d1, k, seq))
-                    elif k.islower():
-                        seq1 = seq | (1 << (ord(k) - 97))
-                        if d0 + d1 < visited.get((k, seq1), 1e6):
-                            heappush(pending, (d0 + d1, k, seq1))
-                    else:
-                        if d0 + d1 < visited.get((k, seq), 1e6):
-                            heappush(pending, (d0 + d1, k, seq))
-
-    return res
+    return solve_1(data), solve_2(data)
 
 
-DATA0 = '''########################
+DATA1 = '''########################
 #f.D.E.e.C.b.A.@.a.B.c.#
 ######################.#
 #d.....................#
 ########################'''
 
+DATA2 = '''#############
+#DcBa.#.GhKl#
+#.###@#@#I###
+#e#d#####j#k#
+###C#@#@###J#
+#fEbA.#.FgHi#
+#############'''
+
+DATA0 = DATA2
 DATA = open(__file__.removesuffix('.py') + '.txt').read()
 
 
@@ -59,4 +91,4 @@ def main(use_test_data=True):
 
 if __name__ == '__main__':
     # main()
-    main(False)  # 2684
+    main(False)  # 2684 | 1886
